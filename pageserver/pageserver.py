@@ -18,11 +18,11 @@ import logging   # Better than print statements
 logging.basicConfig(format='%(levelname)s:%(message)s',
                     level=logging.INFO)
 log = logging.getLogger(__name__)
-# Logging level may be overridden by configuration 
+# Logging level may be overridden by configuration
 
 import socket    # Basic TCP/IP communication on the internet
 import _thread   # Response computation runs concurrently with main program
-
+import os
 
 def listen(portnum):
     """
@@ -37,12 +37,12 @@ def listen(portnum):
     # Internet, streaming socket
     serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # Bind to port and make accessible from anywhere that has our IP address
-    serversocket.bind(('', portnum))
+    serversocket.bind(('10.0.0.174', portnum))
     serversocket.listen(1)    # A real server would have multiple listeners
     return serversocket
 
 
-def serve(sock, func):
+def serve(sock, func, root):
     """
     Respond to connections on sock.
     Args:
@@ -56,7 +56,7 @@ def serve(sock, func):
     while True:
         log.info("Attempting to accept a connection on {}".format(sock))
         (clientsocket, address) = sock.accept()
-        _thread.start_new_thread(func, (clientsocket,))
+        _thread.start_new_thread(func, (clientsocket,root,))
 
 
 ##
@@ -72,13 +72,14 @@ CAT = """
 # See:  https://en.wikipedia.org/wiki/List_of_HTTP_status_codes
 # or    http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
 ##
-STATUS_OK = "HTTP/1.0 200 OK\n\n"
+STATUS_OK = "HTTP/1.0 200 OK\r\n"
 STATUS_FORBIDDEN = "HTTP/1.0 403 Forbidden\n\n"
 STATUS_NOT_FOUND = "HTTP/1.0 404 Not Found\n\n"
 STATUS_NOT_IMPLEMENTED = "HTTP/1.0 401 Not Implemented\n\n"
+HTML = "Content-Type: text/html\r\n\r\n"
+CSS = "Content-Type: text/css\r\n\r\n"
 
-
-def respond(sock):
+def respond(sock, root):
     """
     This server responds only to GET requests (not PUT, POST, or UPDATE).
     Any valid GET request is answered with an ascii graphic of a cat.
@@ -91,8 +92,24 @@ def respond(sock):
 
     parts = request.split()
     if len(parts) > 1 and parts[0] == "GET":
-        transmit(STATUS_OK, sock)
-        transmit(CAT, sock)
+        if '..' in parts[1] or '//' in parts[1] or '~' in parts[1]:
+            transmit(STATUS_FORBIDDEN, sock)
+        if "html" in parts[1]:
+            try:
+                f = open(root + parts[1], 'rb')
+                transmit(STATUS_OK, sock)
+                transmit(HTML, sock)
+                sock.sendfile(f)
+            except:
+                transmit(STATUS_NOT_FOUND, sock)
+        if "css" in parts[1]:
+            try:
+                f = open(root + parts[1], 'rb')
+                transmit(STATUS_OK, sock)
+                transmit(CSS, sock)
+                sock.sendfile(f)
+            except:
+                transmit(STATUS_NOT_FOUND, sock)
     else:
         log.info("Unhandled request: {}".format(request))
         transmit(STATUS_NOT_IMPLEMENTED, sock)
@@ -138,12 +155,14 @@ def get_options():
 def main():
     options = get_options()
     port = options.PORT
+    root = str(options.DOCROOT)
+    log.info(root)
     if options.DEBUG:
         log.setLevel(logging.DEBUG)
     sock = listen(port)
     log.info("Listening on port {}".format(port))
     log.info("Socket is {}".format(sock))
-    serve(sock, respond)
+    serve(sock, respond, root)
 
 
 if __name__ == "__main__":
